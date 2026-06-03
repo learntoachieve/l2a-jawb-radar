@@ -1,0 +1,156 @@
+# Role family taxonomy. Each title-pattern matches against item.title (case-insensitive).
+# The first matching family's multiplier is applied to the item's land_score.
+# Multipliers <1.0 = penalty (less aligned with user's pivot strategy).
+# Multipliers >=1.0 = no penalty (good or excellent fit).
+#
+# User's pivot strategy: IT Support -> Junior Data/QA/Dev -> Data Analyst.
+# Realistic landings (IT Support, Help Desk) are NOT penalized into
+# invisibility - they get 0.85x rather than C-tier 0.65x.
+#
+# Matching is whole-phrase, case-insensitive, with word-boundary fuzzy
+# match against the title. Senior/Staff/Lead penalties are applied
+# separately via experience_match_mult, not via this taxonomy.
+
+families:
+  # A-tier: data-adjacent and aspirational (full weight)
+  - name: data_analyst_exact
+    patterns:
+      - "data analyst ii"
+      - "data analyst iii"
+      - "data analyst i"
+      - "junior data analyst"
+      - "associate data analyst"
+      - "data analyst"
+    multiplier: 1.00
+
+  - name: data_analyst_adjacent
+    patterns:
+      - "business analyst"
+      - "business intelligence"
+      - "bi analyst"
+      - "reporting analyst"
+      - "analytics engineer"
+      - "data scientist"
+      - "junior data scientist"
+    multiplier: 0.97
+
+  - name: operations_quant_research_analyst
+    patterns:
+      - "operations analyst"
+      - "research analyst"
+      - "quantitative analyst"
+      - "product analyst"
+      - "marketing analyst"
+      - "financial analyst"
+      - "risk analyst"
+      - "fraud analyst"
+      - "trust and safety analyst"
+      - "trust & safety analyst"
+      - "people analytics"
+    multiplier: 0.95
+
+  # B-tier: junior dev / QA / IT pivot - equal weight per user spec
+  - name: junior_dev
+    patterns:
+      - "junior software engineer"
+      - "junior developer"
+      - "associate software engineer"
+      - "software engineer i"
+      - "software engineer entry"
+      - "entry level software"
+      - "graduate software engineer"
+      - "junior backend"
+      - "junior frontend"
+      - "junior full stack"
+      - "junior fullstack"
+      - "junior python"
+      - "junior web developer"
+    multiplier: 0.95
+
+  - name: qa_tester
+    patterns:
+      - "qa tester"
+      - "qa analyst"
+      - "qa engineer"
+      - "junior qa"
+      - "quality assurance analyst"
+      - "test engineer"
+      - "junior test engineer"
+      - "qa automation"
+    multiplier: 0.95
+
+  - name: it_support_pivot
+    # IT Support / Help Desk: realistic landings, slight penalty since
+    # user wants to pivot, but not buried because the resume strongly
+    # signals fit and these roles are abundant.
+    patterns:
+      - "it support"
+      - "help desk"
+      - "service desk"
+      - "desktop support"
+      - "technical support"
+      - "application support"
+      - "systems support"
+      - "support technician"
+      - "support analyst"
+      - "support specialist"
+      - "tier 1 support"
+      - "tier 2 support"
+      - "deskside support"
+    multiplier: 0.90
+
+  # AI-lab / specialist families (Phase 4.7.1) — added to lift
+  # Ashby AI-lab postings whose titles don't match the data-analyst
+  # taxonomy but where the user's skills genuinely overlap the JD.
+  - name: ai_lab_technical_staff
+    patterns:
+      - "member of technical staff"
+      - "research engineer"
+      - "applied research"
+      - "research scientist"
+      - "applied scientist"
+    # land_score multiplier (0.85-1.0 narrow range). Match-score weight
+    # is set separately in MATCH_TITLE_FAMILY_WEIGHTS at 0.85.
+    multiplier: 0.92
+
+  - name: operations_specialist
+    patterns:
+      - "operations associate"
+      - "operations specialist"
+      - "operations manager"
+      - "ops engineer"
+      - "ops associate"
+      - "product operations"
+    multiplier: 0.90
+
+  - name: legal_tech_compliance
+    patterns:
+      - "legal tech"
+      - "legal operations"
+      - "legal ops"
+      - "compliance analyst"
+      - "policy analyst"
+    multiplier: 0.90
+
+  # C-tier: CS-adjacent but lower fit
+  - name: cs_adjacent_misc
+    patterns:
+      - "technical writer"
+      - "implementation engineer"
+      - "solutions engineer"
+      - "sales engineer"
+      - "developer advocate"
+      - "devrel"
+      - "site reliability"
+      - "junior sre"
+      - "noc analyst"
+      - "network technician"
+    multiplier: 0.88
+
+# Default for anything not matched. Phase 4.7 narrowed the
+# land_score-side multiplier range from 0.65-1.0 to 0.85-1.0 because
+# title_family is now also a sub-component of match_score (with a
+# wider 0.40-1.00 range). Stacking both ranges would double-count the
+# family penalty; this narrower band keeps land_score's role as a
+# soft re-rank rather than a second-pass score halver.
+default_multiplier: 0.85

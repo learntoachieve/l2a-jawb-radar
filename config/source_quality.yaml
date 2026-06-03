@@ -1,0 +1,24 @@
+# Source quality multiplier applied to land_score.
+# Direct-employer ATS sources (real role, no recruiter middle layer) get
+# a boost. Aggregators that often surface staffing-agency reposts get a
+# penalty. Range deliberately tight (0.85-1.15) so source quality is a
+# nudge, not a determinant.
+
+sources:
+  # Direct ATS - high-signal
+  Ashby: 1.15
+  Greenhouse: 1.10
+  Lever: 1.10
+  Workable: 1.10
+
+  # Mixed quality
+  HackerNewsWhoIsHiring: 1.00
+  RemoteOK: 1.00
+  Remotive: 0.95
+  WeWorkRemotely: 0.95
+
+  # Aggregator (often agency reposts)
+  Himalayas: 1.05
+  Adzuna: 0.90
+
+default_multiplier: 1.00

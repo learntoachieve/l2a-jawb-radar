@@ -1,0 +1,54 @@
+# Items whose title matches any pattern below are hard-excluded from the
+# queue (eligibility_mult = 0). User can add/remove patterns without code
+# changes. Matching is case-insensitive substring against the title.
+
+blocked_patterns:
+  # Sales - not CS-degree career growth
+  - "sales development representative"
+  - "sdr"
+  - "bdr"
+  - "business development representative"
+  - "account executive"
+  - "account manager"
+
+  # Customer success / relationship-only roles
+  - "customer success manager"
+  - "customer success specialist"
+
+  # Pure project management (non-technical)
+  - "project manager"
+  - "scrum master"
+  - "program manager"
+  # Note: "Technical Project Manager" passes - distinct pattern not on this list
+
+  # Recruiting
+  - "recruiter"
+  - "talent sourcer"
+  - "talent acquisition"
+
+  # Marketing without "analyst" or "data" qualifier
+  - "marketing coordinator"
+  - "marketing manager"
+  - "social media manager"
+  - "content marketing"
+
+  # Adzuna noise - non-CS-degree roles
+  - "loan officer"
+  - "bank teller"
+  - "registered nurse"
+  - "medical assistant"
+  - "dental hygienist"
+  - "physical therapist"
+  - "real estate agent"
+  - "insurance agent"
+  - "electrician"
+  - "plumber"
+  - "mechanic"
+  - "truck driver"
+  - "warehouse"
+
+  # Executive
+  - "vp of"
+  - "head of"
+  - "chief"
+  - "director of"

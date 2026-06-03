@@ -1,0 +1,30 @@
+name: Daily Scrape
+
+on:
+  schedule:
+    - cron: "0 13 * * *"   # 13:00 UTC daily (same as job-radar)
+  workflow_dispatch:         # manual trigger from GitHub UI
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scraper
+        env:
+          JAWB_DB_BACKEND: sqlite
+          JAWB_SQLITE_PATH: data/jawb.db
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scripts/cron_run.py

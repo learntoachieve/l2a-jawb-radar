@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "l2a-jawb-radar"
+version = "0.1.0"
+description = "L2A Job Search Pipeline Tool"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["config*", "db*", "scrapers*", "scoring*", "pipeline*", "profiles*", "dashboard*", "scripts*"]

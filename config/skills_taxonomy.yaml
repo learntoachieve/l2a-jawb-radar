@@ -1,0 +1,79 @@
+# Skills taxonomy used by scoring/resume_parser.py to extract criteria
+# from a resume. Terms are matched case-insensitively against word
+# boundaries. All terms below are lowercase.
+#
+# `skills` -> kind="skill", weight=3
+# `roles`  -> kind="role",  weight=4
+#
+# Initial seed targets the Data Analyst persona but is intended to grow.
+skills:
+  languages:
+    - python
+    - sql
+    - r
+    - javascript
+    - java
+    - c++
+    - c#
+  data_libraries:
+    - pandas
+    - numpy
+    - scipy
+    - scikit-learn
+    - statsmodels
+  viz:
+    - plotly
+    - matplotlib
+    - seaborn
+    - tableau
+    - power bi
+    - looker
+    - streamlit
+  databases:
+    - postgresql
+    - mysql
+    - sqlite
+    - mongodb
+    - snowflake
+    - bigquery
+    - redshift
+  tools:
+    - git
+    - github
+    - jupyter
+    - docker
+    - airflow
+    - dbt
+    - excel
+  cloud:
+    - aws
+    - azure
+    - gcp
+  concepts:
+    - etl
+    - eda
+    - statistics
+    - regression
+    - classification
+    - clustering
+    - a/b testing
+    - anomaly detection
+    - data modeling
+    - data warehousing
+
+roles:
+  - data analyst
+  - business analyst
+  - bi analyst
+  - data scientist
+  - analytics engineer
+  - business intelligence
+  - bi
+  - reporting
+
+# kind="keyword" — generic terms that signal relevance but are too broad
+# to grant the role-style 8x multiplier (would over-trigger on JDs that
+# casually mention "data-driven analytics culture" etc.). Keywords cap
+# at 2 occurrences and don't get a title boost.
+keywords:
+  - analytics
