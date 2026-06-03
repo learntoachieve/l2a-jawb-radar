@@ -1,17 +1,23 @@
 """
 scripts/init_db.py
-Initializes the database and seeds default users + sources.
+Initializes the database, ensures data directories exist, and seeds
+default users + scraper sources.
+
 Run once before first use: python scripts/init_db.py
+Safe to re-run; existing rows are left untouched.
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
-from db.database import init_db, get_session
-from db.models import User, Source
+from sqlalchemy import inspect, select
+
+from db.database import get_engine, get_session, init_db
+from db.models import Source, User
 
 
 SEED_USERS = [
@@ -30,38 +36,73 @@ SEED_SOURCES = [
     {"name": "weworkremotely", "type": "rss",  "url": "https://weworkremotely.com/categories/remote-programming-jobs.rss"},
 ]
 
+DATA_DIRS = [
+    ROOT / "data",
+    ROOT / "data" / "resumes",
+]
+
+
+def ensure_data_dirs() -> list[Path]:
+    created: list[Path] = []
+    for d in DATA_DIRS:
+        if not d.exists():
+            d.mkdir(parents=True, exist_ok=True)
+            created.append(d)
+    return created
+
 
 def main() -> None:
-    print("Initializing database...")
-    init_db()
-    print("  ✓ Tables created")
+    print("=" * 60)
+    print("L2A Jawb Radar — DB init")
+    print("=" * 60)
 
+    print("\n[1/3] Ensuring data directories...")
+    created_dirs = ensure_data_dirs()
+    for d in DATA_DIRS:
+        marker = "created" if d in created_dirs else "exists"
+        print(f"  [{marker:>7}] {d.relative_to(ROOT)}")
+
+    print("\n[2/3] Creating tables...")
+    init_db()
+    tables = sorted(inspect(get_engine()).get_table_names())
+    for t in tables:
+        print(f"  [   ok  ] {t}")
+
+    print("\n[3/3] Seeding users and sources...")
+    created_users: list[str] = []
+    created_sources: list[str] = []
     with get_session() as session:
-        # Seed users
         for u in SEED_USERS:
-            from sqlalchemy import select
             existing = session.execute(
                 select(User).where(User.username == u["username"])
             ).scalar_one_or_none()
             if existing is None:
                 session.add(User(username=u["username"], display_name=u["display_name"]))
-                print(f"  ✓ User created: {u['username']}")
+                created_users.append(u["username"])
+                print(f"  [  user ] created: {u['username']}")
             else:
-                print(f"  – User exists: {u['username']}")
+                print(f"  [  user ] exists:  {u['username']}")
 
-        # Seed sources
         for s in SEED_SOURCES:
-            from sqlalchemy import select
             existing = session.execute(
                 select(Source).where(Source.name == s["name"])
             ).scalar_one_or_none()
             if existing is None:
                 session.add(Source(**s))
-                print(f"  ✓ Source created: {s['name']}")
+                created_sources.append(s["name"])
+                print(f"  [ source] created: {s['name']}")
             else:
-                print(f"  – Source exists: {s['name']}")
+                print(f"  [ source] exists:  {s['name']}")
 
-    print("\nDone. Run `streamlit run dashboard/app.py` to launch the dashboard.")
+    print("\n" + "-" * 60)
+    print("Summary")
+    print("-" * 60)
+    print(f"  Tables present:    {len(tables)}")
+    print(f"  Users created:     {len(created_users)} ({', '.join(created_users) or 'none'})")
+    print(f"  Sources created:   {len(created_sources)} ({', '.join(created_sources) or 'none'})")
+    print(f"  Data dirs created: {len(created_dirs)}")
+    print("\nDone. Launch the dashboard with:")
+    print("  streamlit run dashboard/app.py")
 
 
 if __name__ == "__main__":

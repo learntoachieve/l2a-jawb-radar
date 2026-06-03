@@ -39,6 +39,12 @@ def extract_text(file_path: str) -> str:
     )
 
 
+# Backwards-compatible alias. Newer callers (profile_manager, dashboard)
+# import this name; ``extract_text`` remains the canonical entry point
+# and dispatches on file extension.
+extract_text_from_pdf = extract_text
+
+
 def load_taxonomy(path: Path | str = TAXONOMY_PATH) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}

@@ -31,6 +31,7 @@ they just apply different downstream weights.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 from .text_utils import (
@@ -283,6 +284,147 @@ def compute_match_score(
         "final": final,
     }
     return final, breakdown
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 additive signal extractors
+#
+# These do not change compute_match_score weights. They run alongside it
+# and the orchestrator (scoring/scorer.py) applies the bonuses / flags
+# downstream of the v2 base score.
+# ---------------------------------------------------------------------------
+
+_SENIORITY_SENIOR_PATTERNS = [
+    r"\bsenior\b", r"\bsr\.?\b", r"\bstaff\b", r"\bprincipal\b", r"\blead\b",
+    r"\b5\+\s*years?\b", r"\b7\+\s*years?\b", r"\b8\+\s*years?\b",
+    r"\b10\+\s*years?\b", r"\b6\+\s*years?\b", r"\bdirector\b",
+]
+_SENIORITY_MID_PATTERNS = [
+    r"\b3\+\s*years?\b", r"\b4\+\s*years?\b",
+    r"\bmid[- ]?level\b", r"\b3\s*[-–]\s*5\s*years?\b",
+    r"\b2\s*[-–]\s*4\s*years?\b",
+]
+_SENIORITY_ENTRY_PATTERNS = [
+    r"\bentry[- ]?level\b", r"\bnew[- ]?grad(uate)?\b",
+    r"\brecent\s+graduate\b", r"\bjunior\b", r"\b(jr\.?)\b",
+    r"\bassociate\b", r"\b0\s*[-–]\s*2\s*years?\b", r"\b1\+\s*year\b",
+    r"\binternship\b", r"\bintern\b",
+]
+
+
+def _any_match(patterns: list[str], text: str) -> bool:
+    return any(re.search(p, text, flags=re.IGNORECASE) for p in patterns)
+
+
+def extract_seniority_signal(body: str) -> Optional[str]:
+    """Return the strongest seniority signal detected in ``body``.
+
+    Returns one of ``"senior"``, ``"mid"``, ``"entry"``, or ``None``.
+    Strength order: senior > mid > entry. The first matching tier
+    wins so a JD that says "Senior engineer, 3+ years experience"
+    still resolves as senior.
+    """
+    if not body:
+        return None
+    text = normalize_unicode(clean_html(body))
+    if _any_match(_SENIORITY_SENIOR_PATTERNS, text):
+        return "senior"
+    if _any_match(_SENIORITY_MID_PATTERNS, text):
+        return "mid"
+    if _any_match(_SENIORITY_ENTRY_PATTERNS, text):
+        return "entry"
+    return None
+
+
+_SALARY_TOKEN = r"\$?\s*(\d+(?:[,. ]\d{3})*(?:\s*[kK])?)"
+_SALARY_RANGE_RE = re.compile(
+    rf"{_SALARY_TOKEN}\s*(?:-|to|–|—|until)\s*{_SALARY_TOKEN}",
+    flags=re.IGNORECASE,
+)
+
+_MIN_PLAUSIBLE_ANNUAL = 10_000
+_MAX_PLAUSIBLE_ANNUAL = 1_000_000
+
+
+def _parse_salary_token(token: str) -> Optional[int]:
+    s = token.strip().lower().replace(" ", "")
+    multiplier = 1
+    if s.endswith("k"):
+        multiplier = 1000
+        s = s[:-1]
+    s = s.replace(",", "").replace(".", "").replace(" ", "")
+    if not s.isdigit():
+        return None
+    value = int(s) * multiplier
+    if value < _MIN_PLAUSIBLE_ANNUAL or value > _MAX_PLAUSIBLE_ANNUAL:
+        return None
+    return value
+
+
+def extract_salary_signal(body: str) -> tuple[Optional[int], Optional[int]]:
+    """Return ``(min, max)`` annual USD detected in ``body``.
+
+    Handles the common formats:
+      "$80,000 - $120,000", "$80k-$120k", "$80K to $120K",
+      "80000 to 120000", "80k to 120k per year"
+
+    Returns ``(None, None)`` if no plausible range is found. Values
+    below $10k or above $1M are treated as implausible (probably
+    hourly, monthly, or equity).
+    """
+    if not body:
+        return (None, None)
+    text = normalize_unicode(clean_html(body))
+    for match in _SALARY_RANGE_RE.finditer(text):
+        lo = _parse_salary_token(match.group(1))
+        hi = _parse_salary_token(match.group(2))
+        if lo is None or hi is None:
+            continue
+        if lo > hi:
+            lo, hi = hi, lo
+        return (lo, hi)
+    return (None, None)
+
+
+# Hard-coded dealbreakers checked on every body, regardless of profile
+# blocklist. Each entry is (canonical_label, compiled_regex).
+_HARD_DEALBREAKERS: list[tuple[str, re.Pattern[str]]] = [
+    ("require sponsor",       re.compile(r"requir\w*\s+(visa\s+)?sponsor",      re.IGNORECASE)),
+    ("sponsorship not",       re.compile(r"sponsor\w*\s+(is\s+)?not",            re.IGNORECASE)),
+    ("must be us citizen",    re.compile(r"must\s+be\s+(?:a\s+)?(?:us|u\.s\.)\s*citizen", re.IGNORECASE)),
+    ("us citizen required",   re.compile(r"(?:us|u\.s\.)\s*citizen\w*\s+(?:is\s+)?required", re.IGNORECASE)),
+    ("security clearance required", re.compile(r"security\s+clearance\s+(?:is\s+)?required", re.IGNORECASE)),
+    ("active clearance",      re.compile(r"active\s+(?:security\s+)?clearance",   re.IGNORECASE)),
+    ("polygraph",             re.compile(r"\bpolygraph\b",                         re.IGNORECASE)),
+    ("relocation required",   re.compile(r"relocation\s+(?:is\s+)?required",       re.IGNORECASE)),
+]
+
+
+def extract_dealbreakers(body: str, blocklist: list[str]) -> list[str]:
+    """Return canonical labels for each dealbreaker pattern matched in ``body``.
+
+    Always checks the hard-coded patterns (visa sponsorship, citizenship,
+    clearance, polygraph, relocation). Also matches blocklist terms
+    (company names, user-defined strings) case-insensitively as
+    substrings against the body. De-duplicated, order preserved.
+    """
+    if not body:
+        return []
+    text = normalize_unicode(clean_html(body))
+    matched: list[str] = []
+    seen: set[str] = set()
+    for label, pattern in _HARD_DEALBREAKERS:
+        if pattern.search(text) and label not in seen:
+            matched.append(label)
+            seen.add(label)
+    for term in blocklist or []:
+        term_clean = (term or "").strip()
+        if not term_clean:
+            continue
+        if term_clean.lower() in text.lower() and term_clean not in seen:
+            matched.append(term_clean)
+            seen.add(term_clean)
+    return matched
 
 
 def matched_terms_from_breakdown(

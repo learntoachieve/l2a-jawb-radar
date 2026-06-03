@@ -1,144 +1,195 @@
-"""Iterate items in the DB to score and to extract keywords in bulk."""
+"""Batch scoring + score retention.
+
+Phase 3 rewrites the previous prototype (which referenced a non-existent
+``KeywordExtract`` model). The two public entry points are:
+
+  score_profile(profile_id)
+      Score every recent item (posted within 30 days) against the
+      profile's active resume, skipping any item that already has a
+      score row for (profile_id, active_resume_id). Uses the Phase 3
+      ``score_item_full`` path so dealbreakers, salary, and seniority
+      signals all flow into the persisted breakdown.
+
+  purge_stale_scores(days=30)
+      Delete score rows whose item is older than ``days`` and which
+      have no tracking row for the same (item_id, profile_id) — items
+      the user has touched stay in the scoreboard forever.
+"""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, exists, or_, select
 
 from db.database import get_session
-from db.models import Criterion, Item, KeywordExtract, Profile, Score
+from db.models import (
+    Item,
+    Profile,
+    ProfileCompanyBlocklist,
+    Score,
+    Tracking,
+)
 
-from .jd_extractor import extract_keywords
-from .scorer import score_item_raw, upsert_score
+from .scorer import score_item_full, upsert_score
 
 
 def _now_utc_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _bucket(score: float) -> str:
-    if score < 25:
-        return "0-25"
-    if score < 50:
-        return "25-50"
-    if score < 75:
-        return "50-75"
-    return "75-100"
+def _load_blocklist(session, profile_id: int) -> list[str]:
+    rows = session.execute(
+        select(ProfileCompanyBlocklist.company_name).where(
+            ProfileCompanyBlocklist.profile_id == profile_id
+        )
+    ).scalars().all()
+    return [r for r in rows if r]
 
 
-def score_all_items(profile_name: str, force: bool = False) -> dict:
-    """Single-pass scoring against a named profile.
+def _company_blocked(metadata_json, blocklist: list[str]) -> bool:
+    """Case-insensitive substring match of metadata.company against blocklist.
 
-    Phase 4.7: v2 ``score_item_raw`` emits a 0-100 score directly, so
-    the second-pass dataset-relative normalisation that v1 relied on is
-    no longer needed. The Score row's ``score`` field equals
-    ``raw_score`` for every item — both columns kept in sync for
-    backwards-compatible downstream consumers (the dashboard reads
-    ``score``; older queries may inspect ``raw_score``).
+    Same semantics as ``dashboard.data._company_is_blocked`` — kept here
+    so batch scoring doesn't depend on the dashboard layer.
     """
-    summary = {
-        "total_items": 0,
-        "scored": 0,
-        "skipped": 0,
-        "errors": 0,
-        "score_distribution": {"0-25": 0, "25-50": 0, "50-75": 0, "75-100": 0},
-    }
+    if not blocklist:
+        return False
+    company = (metadata_json or {}).get("company") if metadata_json else None
+    if not company:
+        return False
+    c = str(company).lower()
+    return any(term and term.strip().lower() in c for term in blocklist)
+
+
+def score_profile(profile_id: int) -> dict[str, Any]:
+    """Score recent items against this profile's active resume.
+
+    Recent = items.posted_at within the last 30 days OR items with a
+    NULL posted_at (some scrapers don't supply one and we'd rather
+    over-score than silently drop unattributed posts).
+
+    Skips any item that already has a Score for (profile_id, active_resume_id).
+    """
+    # Defer to avoid an import cycle: profile_manager -> scoring -> scorer
+    # -> match_score_v2 -> text_utils. profile_manager itself imports
+    # scoring.resume_parser, so a top-level import here is safe in
+    # principle but the lazy form keeps batch.py importable even if
+    # profile_manager is mid-edit.
+    from profiles.profile_manager import get_active_criteria
+
+    summary = {"scored": 0, "skipped": 0, "errors": 0, "profile_id": profile_id}
+
+    criteria_dicts = get_active_criteria(profile_id)
 
     with get_session() as session:
-        profile = session.execute(
-            select(Profile).where(Profile.name == profile_name)
-        ).scalar_one_or_none()
+        profile = session.get(Profile, profile_id)
         if profile is None:
-            raise RuntimeError(f"Profile not found: {profile_name!r}")
+            summary["error"] = f"profile {profile_id} not found"
+            return summary
 
-        criteria = (
-            session.execute(
-                select(Criterion).where(Criterion.profile_id == profile.id)
+        active_resume_id = profile.active_resume_id
+        blocklist = _load_blocklist(session, profile_id)
+
+        cutoff = _now_utc_naive() - timedelta(days=30)
+        items = session.execute(
+            select(Item).where(
+                or_(Item.posted_at.is_(None), Item.posted_at >= cutoff)
             )
-            .scalars()
-            .all()
+        ).scalars().all()
+
+        # Pre-load existing (item_id) for this (profile_id, active_resume_id)
+        # so we don't issue a SELECT per item.
+        resume_cond = (
+            Score.resume_id.is_(None) if active_resume_id is None
+            else Score.resume_id == active_resume_id
+        )
+        scored_item_ids = set(
+            session.execute(
+                select(Score.item_id).where(
+                    Score.profile_id == profile_id,
+                    resume_cond,
+                )
+            ).scalars().all()
         )
 
-        items = session.execute(select(Item)).scalars().all()
-        summary["total_items"] = len(items)
-
-        existing_scores = {
-            s.item_id: s
-            for s in session.execute(
-                select(Score).where(Score.profile_id == profile.id)
-            )
-            .scalars()
-            .all()
-        }
-
         for item in items:
+            if item.id in scored_item_ids:
+                summary["skipped"] += 1
+                continue
+            if _company_blocked(item.metadata_json, blocklist):
+                # Don't even score blocklisted-company items. The dashboard
+                # filters them again at query time, but skipping here
+                # keeps the scores table clean.
+                summary["skipped"] += 1
+                continue
             try:
-                if not force:
-                    cached = existing_scores.get(item.id)
-                    if (
-                        cached is not None
-                        and cached.raw_score is not None
-                        and profile.parsed_at is not None
-                        and cached.computed_at >= profile.parsed_at
-                    ):
-                        summary["skipped"] += 1
-                        summary["score_distribution"][_bucket(cached.score)] += 1
-                        continue
-
-                raw, matched = score_item_raw(
-                    item, profile, session, criteria=criteria
+                final, breakdown, matched = score_item_full(
+                    item, profile, criteria_dicts, blocklist,
                 )
-                upsert_score(item.id, profile.id, raw, raw, matched, session)
+                upsert_score(
+                    item_id=item.id,
+                    profile_id=profile_id,
+                    resume_id=active_resume_id,
+                    normalized=final,
+                    raw=breakdown.get("base_match_score", final),
+                    matched=matched,
+                    breakdown=breakdown,
+                    session=session,
+                )
                 summary["scored"] += 1
-                summary["score_distribution"][_bucket(raw)] += 1
             except Exception as exc:
                 summary["errors"] += 1
-                print(f"[scorer] error on item {item.id}: {exc}")
+                print(f"[batch] error item {item.id}: {exc}")
 
         session.commit()
 
     return summary
 
 
-def extract_all_keywords(force: bool = False) -> dict:
-    summary = {"total": 0, "extracted": 0, "skipped": 0, "errors": 0}
+def purge_stale_scores(days: int = 30) -> int:
+    """Delete scores whose item is older than ``days`` AND has no tracking
+    row for the same (item_id, profile_id).
+
+    Items the user is tracking (interested, applied, interview, offer,
+    ghosted, etc.) keep their scores forever so the pipeline tab can
+    still reference them.
+
+    Returns the number of deleted rows.
+    """
+    cutoff = _now_utc_naive() - timedelta(days=days)
 
     with get_session() as session:
-        items = session.execute(select(Item)).scalars().all()
-        summary["total"] = len(items)
-
-        existing_ids = set(
-            session.execute(select(KeywordExtract.item_id)).scalars().all()
+        # Find score rows where:
+        #  - linked item.posted_at < cutoff (NULL posted_at => skip)
+        #  - and no tracking row exists for the same (item_id, profile_id)
+        tracking_exists = (
+            select(Tracking.id).where(
+                Tracking.item_id == Score.item_id,
+                Tracking.profile_id == Score.profile_id,
+            ).exists()
         )
 
-        for item in items:
-            try:
-                if not force and item.id in existing_ids:
-                    summary["skipped"] += 1
-                    continue
+        targets = session.execute(
+            select(Score.id).join(Item, Item.id == Score.item_id).where(
+                Item.posted_at.is_not(None),
+                Item.posted_at < cutoff,
+                ~tracking_exists,
+            )
+        ).scalars().all()
 
-                keywords = extract_keywords(item)
+        if not targets:
+            return 0
 
-                row = session.execute(
-                    select(KeywordExtract).where(KeywordExtract.item_id == item.id)
-                ).scalar_one_or_none()
-                if row is None:
-                    session.add(
-                        KeywordExtract(
-                            item_id=item.id,
-                            keywords_json=keywords,
-                            extracted_at=_now_utc_naive(),
-                        )
-                    )
-                else:
-                    row.keywords_json = keywords
-                    row.extracted_at = _now_utc_naive()
-
-                summary["extracted"] += 1
-            except Exception as exc:
-                summary["errors"] += 1
-                print(f"[jd_extractor] error on item {item.id}: {exc}")
+        deleted = 0
+        # Chunked delete keeps the parameter list under typical DB limits.
+        chunk = 500
+        for start in range(0, len(targets), chunk):
+            ids = targets[start : start + chunk]
+            session.execute(
+                Score.__table__.delete().where(Score.id.in_(ids))
+            )
+            deleted += len(ids)
 
         session.commit()
-
-    return summary
+        return deleted

@@ -3,18 +3,19 @@ SQLAlchemy 2.x mapped models for L2A Jawb Radar.
 
 Table hierarchy:
   users
-    └── profiles
+    └── profiles               (active_resume_id -> resumes.id)
           ├── profile_target_roles
           ├── profile_locations
           ├── profile_industries
           ├── profile_company_blocklist
-          └── criteria
+          ├── resumes
+          └── criteria         (resume_id -> resumes.id, nullable=manual)
   sources
   source_registry
   items (FK: source)
-    ├── scores       (FK: profile)
+    ├── scores       (FK: profile, resume nullable)
     ├── tracking     (FK: profile, user)
-    └── applications (FK: profile)
+    └── applications (FK: profile, resume nullable)
 """
 from __future__ import annotations
 
@@ -87,11 +88,31 @@ class Profile(Base):
     salary_min: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     salary_max: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    # Active resume pointer (nullable: a profile may exist before any upload).
+    # use_alter resolves the profiles<->resumes circular FK at CREATE time.
+    active_resume_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("resumes.id", use_alter=True, name="fk_profiles_active_resume_id"),
+        nullable=True,
+    )
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+
+
+class Resume(Base):
+    """One uploaded resume version per row. A profile may own many."""
+    __tablename__ = "resumes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("profiles.id"), nullable=False)
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    filename: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    raw_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    parsed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class ProfileTargetRole(Base):
@@ -147,11 +168,19 @@ class ProfileCompanyBlocklist(Base):
 
 
 class Criterion(Base):
-    """Skills, roles, and keywords extracted from resume or added manually."""
+    """Skills, roles, and keywords extracted from resume or added manually.
+
+    ``resume_id`` is NULL for manually added criteria so they survive
+    resume switches; set to the originating Resume row for resume-parsed
+    criteria so we can scope to the active resume only.
+    """
     __tablename__ = "criteria"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     profile_id: Mapped[int] = mapped_column(ForeignKey("profiles.id"), nullable=False)
+    resume_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("resumes.id"), nullable=True
+    )
     term: Mapped[str] = mapped_column(String, nullable=False)
     weight: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     weight_tier: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
@@ -240,6 +269,11 @@ class Score(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), nullable=False)
     profile_id: Mapped[int] = mapped_column(ForeignKey("profiles.id"), nullable=False)
+    # Which resume produced this score. Nullable so a profile with no
+    # uploaded resume can still receive scores from manual criteria.
+    resume_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("resumes.id"), nullable=True
+    )
     score: Mapped[float] = mapped_column(Float, nullable=False)
     raw_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     matched_terms_json: Mapped[Optional[list[Any]]] = mapped_column(JSON, nullable=True)
@@ -247,7 +281,10 @@ class Score(Base):
     computed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     __table_args__ = (
-        UniqueConstraint("item_id", "profile_id", name="uq_scores_item_profile"),
+        UniqueConstraint(
+            "item_id", "profile_id", "resume_id",
+            name="uq_scores_item_profile_resume",
+        ),
     )
 
 
@@ -319,6 +356,9 @@ class Application(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), nullable=False)
     profile_id: Mapped[int] = mapped_column(ForeignKey("profiles.id"), nullable=False)
+    resume_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("resumes.id"), nullable=True
+    )
     resume_version: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tailored_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     keyword_diff_snapshot_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)

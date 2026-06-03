@@ -1,0 +1,102 @@
+# Company ATS board registry — slug lists per platform.
+#
+# Read by scrapers/greenhouse.py, scrapers/ashby.py, scrapers/lever.py
+# via _load_slugs(). Each slug is the URL path component for the
+# company's public job board:
+#
+#   greenhouse -> https://boards.greenhouse.io/{slug}
+#   lever      -> https://jobs.lever.co/{slug}
+#   ashby      -> https://jobs.ashbyhq.com/{slug}
+#
+# 404s on any individual slug are silently skipped by the scraper,
+# so a stale entry won't break the run — but it does waste an HTTP
+# round-trip. Remove obsolete slugs when you notice them.
+#
+# Allocation notes:
+#   - The "AI lab" cohort (Anthropic, OpenAI, Cohere, Mistral,
+#     Perplexity, Character.AI, Together AI, etc.) lives on Ashby,
+#     not Greenhouse — listed there in the original prompt but
+#     placed here under the right platform.
+#   - Some companies migrate ATSes; if a slug starts returning 404,
+#     try it on a different platform.
+
+greenhouse:
+  - airbnb
+  - stripe
+  - doordash
+  - coinbase
+  - dropbox
+  - robinhood
+  - reddit
+  - roblox
+  - snap
+  - twilio
+  - asana
+  - discord
+  - plaid
+  - klaviyo
+  - affirm
+  - cloudflare
+  - databricks
+  - confluent
+  - snowflake
+  - planetscale
+  - scaleaicareers
+  - gusto
+  - figma
+  - retool
+  - brex
+  - rippling
+
+lever:
+  - airtable
+  - latticehq
+  - frontapp
+  - superhuman
+  - loom
+  - benchling
+  - netlify
+  - mixpanel
+  - postman
+  - sentry
+  - calendly
+  - gitlab
+
+ashby:
+  - anthropic
+  - openai
+  - perplexity
+  - characterai
+  - cohere
+  - mistral
+  - runwayml
+  - replicate
+  - huggingface
+  - weights-and-biases
+  - modal
+  - braintrust
+  - harvey
+  - sierra
+  - hebbia
+  - glean
+  - decagon
+  - linear
+  - posthog
+  - browserbase
+  - anysphere
+  - vercel
+  - supabase
+  - prisma
+  - replit
+  - notion
+  - mercor
+  - clay
+  - rampnetwork
+  - weaviate
+  - pinecone
+  - baseten
+  - neon
+  - railway
+  - togetherai
+  - adept
+  - inflection
