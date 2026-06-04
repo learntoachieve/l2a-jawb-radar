@@ -38,6 +38,9 @@ from db.models import (
     Tracking,
     TrackingStatus,
 )
+# US-only filter (shared with scoring.batch so the queue and the scorer
+# agree on what counts as a US/remote-US posting).
+from scoring.geo_filter import is_us_or_remote as _is_us_or_remote
 
 
 DEFAULT_PAGE_SIZE = 300
@@ -117,6 +120,12 @@ def _row_to_dict(item: Item, score: Score, tracking: Optional[Tracking],
         "seniority_signal": breakdown.get("seniority_signal"),
         "salary_match": breakdown.get("salary_match"),
         "dealbreakers": breakdown.get("dealbreakers") or [],
+        # Surfaced so the Queue tab can filter by the donut's category.
+        # Falls back to None when the score predates the breakdown
+        # field; the tab maps None to the "Other" bucket via
+        # ``_family_label``.
+        "title_family_matched": breakdown.get("title_family_matched"),
+        "industry_category": item.industry_category,
         "tracking_status": tracking_status,
     }
 
@@ -186,6 +195,8 @@ def get_today_queue(
                 continue
             if _company_is_blocked(item.metadata_json, blocklist):
                 continue
+            if not _is_us_or_remote(item.metadata_json):
+                continue
             recency_pct = _recency_pct(item.posted_at, now)
             score_val = float(score.score) if score.score is not None else 0.0
             blended = score_val * W_SCORE + recency_pct * W_RECENCY
@@ -196,6 +207,144 @@ def get_today_queue(
     results.sort(key=lambda r: r["blended_score"], reverse=True)
     start = (page - 1) * page_size
     return results[start : start + page_size]
+
+
+def _family_label(slug: str) -> str:
+    """Pretty-print a role-family slug for the donut.
+
+    ``operations_specialist`` -> ``Operations Specialist``.
+    ``ai_lab_technical_staff`` -> ``AI Lab Technical Staff``.
+    """
+    if not slug or slug == "default":
+        return "Other"
+    upper = {"ai", "ml", "qa", "it", "cs", "us"}
+    parts = []
+    for token in slug.replace("-", "_").split("_"):
+        if token.lower() in upper:
+            parts.append(token.upper())
+        else:
+            parts.append(token.capitalize())
+    return " ".join(parts)
+
+
+def get_category_counts(profile_id: int) -> list[dict[str, Any]]:
+    """Return ``[{category, count}, ...]`` for the Overview donut.
+
+    Bucketing priority:
+      1. ``items.industry_category`` if populated (LLM classifier — not
+         live yet but supported for forward-compat).
+      2. ``scores.score_breakdown_json.title_family_matched`` — the
+         role family our scoring engine recognized in the title.
+      3. ``"Other"`` if neither is available or if the family is the
+         ``default`` bucket.
+
+    The same dealbreaker + blocklist + recency filters as
+    ``get_today_queue`` apply, so the donut counts only items that
+    would appear in the queue.
+    """
+    now = _now_utc_naive()
+    cutoff = now - timedelta(days=RETENTION_DAYS)
+
+    with get_session() as session:
+        profile = session.get(Profile, profile_id)
+        active_resume_id = profile.active_resume_id if profile else None
+        blocklist = _load_blocklist_terms(session, profile_id)
+
+        rows = session.execute(
+            _base_query(profile_id, active_resume_id, cutoff)
+        ).all()
+
+        counts: dict[str, int] = {}
+        for item, score, _tracking in rows:
+            breakdown = score.score_breakdown_json or {}
+            if breakdown.get("dealbreakers"):
+                continue
+            if _company_is_blocked(item.metadata_json, blocklist):
+                continue
+            if not _is_us_or_remote(item.metadata_json):
+                continue
+            cat = item.industry_category
+            if not cat:
+                cat = _family_label(breakdown.get("title_family_matched") or "")
+            cat = cat or "Other"
+            counts[cat] = counts.get(cat, 0) + 1
+
+    return [
+        {"category": k, "count": v}
+        for k, v in sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+
+
+_PIPELINE_OPEN_STATUSES = {
+    TrackingStatus.opened,
+    TrackingStatus.recruiter_screen,
+    TrackingStatus.assessment,
+    TrackingStatus.interview,
+}
+
+
+def get_pipeline_counts(profile_id: int) -> dict[str, int]:
+    """Top-bar metrics for the Overview tab.
+
+    Returns::
+
+        {
+            "high_fit": <queue rows with score >= 75>,
+            "applied_this_week": <tracking rows applied within 7 days>,
+            "open_in_pipeline": <tracking rows in active intermediate statuses>,
+        }
+
+    ``high_fit`` is computed against the same filtered queue as
+    ``get_today_queue`` so the metric matches what the user sees.
+    The two tracking counts ignore queue filters (they're about the
+    pipeline, not the queue).
+    """
+    now = _now_utc_naive()
+    cutoff = now - timedelta(days=RETENTION_DAYS)
+    week_ago = now - timedelta(days=7)
+
+    with get_session() as session:
+        profile = session.get(Profile, profile_id)
+        active_resume_id = profile.active_resume_id if profile else None
+        blocklist = _load_blocklist_terms(session, profile_id)
+
+        rows = session.execute(
+            _base_query(profile_id, active_resume_id, cutoff)
+        ).all()
+
+        high_fit = 0
+        for item, score, _tracking in rows:
+            breakdown = score.score_breakdown_json or {}
+            if breakdown.get("dealbreakers"):
+                continue
+            if _company_is_blocked(item.metadata_json, blocklist):
+                continue
+            if not _is_us_or_remote(item.metadata_json):
+                continue
+            if (score.score or 0) >= 75:
+                high_fit += 1
+
+        applied_this_week = session.execute(
+            select(Tracking).where(
+                Tracking.profile_id == profile_id,
+                Tracking.status == TrackingStatus.applied,
+                Tracking.applied_at.is_not(None),
+                Tracking.applied_at >= week_ago,
+            )
+        ).scalars().all()
+
+        open_pipeline = session.execute(
+            select(Tracking).where(
+                Tracking.profile_id == profile_id,
+                Tracking.status.in_(list(_PIPELINE_OPEN_STATUSES)),
+            )
+        ).scalars().all()
+
+    return {
+        "high_fit": high_fit,
+        "applied_this_week": len(applied_this_week),
+        "open_in_pipeline": len(open_pipeline),
+    }
 
 
 def get_queue_total(profile_id: int) -> int:
@@ -217,6 +366,8 @@ def get_queue_total(profile_id: int) -> int:
             if breakdown.get("dealbreakers"):
                 continue
             if _company_is_blocked(item.metadata_json, blocklist):
+                continue
+            if not _is_us_or_remote(item.metadata_json):
                 continue
             total += 1
         return total

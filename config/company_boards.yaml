@@ -12,91 +12,66 @@
 # so a stale entry won't break the run — but it does waste an HTTP
 # round-trip. Remove obsolete slugs when you notice them.
 #
-# Allocation notes:
-#   - The "AI lab" cohort (Anthropic, OpenAI, Cohere, Mistral,
-#     Perplexity, Character.AI, Together AI, etc.) lives on Ashby,
-#     not Greenhouse — listed there in the original prompt but
-#     placed here under the right platform.
-#   - Some companies migrate ATSes; if a slug starts returning 404,
-#     try it on a different platform.
+# This file was last audited 2026-06-03 by hitting each candidate
+# against the platform's posting API; only slugs that returned 200
+# with a non-empty job list remained. Common reasons a slug 404s:
+#   - the company migrated ATSes (e.g. half the Greenhouse AI-lab
+#     cohort moved to Ashby, then half of those got behind auth)
+#   - the company turned off the public API while keeping the
+#     embedded board (Anthropic does this on Ashby today)
+#   - the slug name on the API differs from the public URL
 
 greenhouse:
   - airbnb
   - stripe
-  - doordash
-  - coinbase
   - dropbox
   - robinhood
   - reddit
   - roblox
-  - snap
   - twilio
   - asana
   - discord
-  - plaid
   - klaviyo
   - affirm
   - cloudflare
   - databricks
-  - confluent
-  - snowflake
   - planetscale
-  - scaleaicareers
   - gusto
   - figma
-  - retool
   - brex
-  - rippling
+  # coinbase returned 200 with 0 open jobs at the last audit; left in
+  # because it tends to open hiring in waves. Drop if it stays empty.
+  - coinbase
 
+# Every Lever public-API candidate we tested (50+, including the
+# usual suspects: stripe, notion, figma, linear, brex, rippling,
+# scale-ai, weights-and-biases, cohere, gitlab, mixpanel, sentry,
+# calendly, postman, netlify, benchling, airtable, latticehq...)
+# returned 404. Most companies that were on Lever have migrated to
+# Ashby, Greenhouse, or their own ATS. Only ``pipedrive`` (26 open
+# roles) currently surfaces, so the list stays intentionally small
+# until we either find more real tenants or retire the scraper.
 lever:
-  - airtable
-  - latticehq
-  - frontapp
-  - superhuman
-  - loom
-  - benchling
-  - netlify
-  - mixpanel
-  - postman
-  - sentry
-  - calendly
-  - gitlab
+  - pipedrive
 
 ashby:
-  - anthropic
   - openai
   - perplexity
-  - characterai
   - cohere
-  - mistral
-  - runwayml
-  - replicate
-  - huggingface
-  - weights-and-biases
   - modal
   - braintrust
   - harvey
   - sierra
-  - hebbia
-  - glean
   - decagon
   - linear
   - posthog
   - browserbase
-  - anysphere
-  - vercel
   - supabase
-  - prisma
   - replit
   - notion
   - mercor
-  - clay
-  - rampnetwork
   - weaviate
   - pinecone
   - baseten
   - neon
   - railway
-  - togetherai
-  - adept
-  - inflection

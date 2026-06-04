@@ -50,6 +50,34 @@ def load_taxonomy(path: Path | str = TAXONOMY_PATH) -> dict:
         return yaml.safe_load(f) or {}
 
 
+def core_skill_terms(taxonomy: dict | None = None) -> set[str]:
+    """Lowercased set of skill terms that should be inserted as tier-1
+    criteria.
+
+    A skill is "core" (tier-1, strongest signal) when its category is
+    listed under ``core_skill_categories`` in the taxonomy. Everything
+    else is tier-2. Returns an empty set when no core categories are
+    configured, in which case all skills fall back to tier-2.
+    """
+    tax = taxonomy if taxonomy is not None else load_taxonomy()
+    skills = tax.get("skills") or {}
+    cores: set[str] = set()
+    for category in tax.get("core_skill_categories") or []:
+        for term in skills.get(category) or []:
+            cores.add(str(term).lower())
+    return cores
+
+
+def skill_weight_tier(term: str, core_terms: set[str]) -> int:
+    """Tier 1 for a core skill, tier 2 otherwise.
+
+    ``core_terms`` is the set returned by ``core_skill_terms`` — pass it
+    in once when inserting a batch of skills so the taxonomy is only
+    read a single time.
+    """
+    return 1 if str(term).lower() in core_terms else 2
+
+
 def _now_utc_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -73,6 +101,8 @@ def parse_resume(file_path: str, profile_name: str) -> Profile:
     matched_skills = find_terms(raw_text, skill_terms)
     matched_roles = find_terms(raw_text, role_terms)
     matched_keywords = find_terms(raw_text, keyword_terms)
+
+    core_terms = core_skill_terms(taxonomy)
 
     with get_session() as session:
         profile = session.execute(
@@ -105,6 +135,7 @@ def parse_resume(file_path: str, profile_name: str) -> Profile:
                     term=term,
                     kind="skill",
                     weight=3,
+                    weight_tier=skill_weight_tier(term, core_terms),
                     match_type="fuzzy",
                     source="resume",
                 )

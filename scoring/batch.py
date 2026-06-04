@@ -31,6 +31,7 @@ from db.models import (
     Tracking,
 )
 
+from .geo_filter import is_us_or_remote as _is_us_or_remote
 from .scorer import score_item_full, upsert_score
 
 
@@ -121,6 +122,12 @@ def score_profile(profile_id: int) -> dict[str, Any]:
                 # Don't even score blocklisted-company items. The dashboard
                 # filters them again at query time, but skipping here
                 # keeps the scores table clean.
+                summary["skipped"] += 1
+                continue
+            if not _is_us_or_remote(item.metadata_json):
+                # US-only for now: international postings waste scoring
+                # capacity and inflate the corpus. Same predicate the
+                # dashboard queue uses, so the two layers never disagree.
                 summary["skipped"] += 1
                 continue
             try:

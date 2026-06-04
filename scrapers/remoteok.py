@@ -89,11 +89,26 @@ class RemoteOKScraper(BaseScraper):
             ),
         }
 
+        # Construct the URL deterministically from id + optional slug
+        # instead of trusting raw["url"]. RemoteOK's API has previously
+        # returned the catalog landing page in every job's url field,
+        # which collapses every insert to the same value and trips
+        # the (source_id, url) unique constraint after the first row.
+        # The id is guaranteed unique; the slug just makes the URL
+        # readable in the dashboard. Also force lowercase host so
+        # mixed-case API values (e.g. 'remoteOK.com') don't fragment
+        # cross-run dedup.
+        slug = raw.get("slug")
+        if slug:
+            url = f"https://remoteok.com/remote-jobs/{slug}"
+        else:
+            url = f"https://remoteok.com/remote-jobs/{raw['id']}"
+
         return {
             "external_id": str(raw["id"]),
             "title": title,
             "body": body,
-            "url": raw.get("url") or f"https://remoteok.com/remote-jobs/{raw['id']}",
+            "url": url,
             "metadata_json": metadata,
             "posted_at": posted_at,
         }

@@ -1,12 +1,103 @@
-# Skills taxonomy used by scoring/resume_parser.py to extract criteria
-# from a resume. Terms are matched case-insensitively against word
-# boundaries. All terms below are lowercase.
+# Skills taxonomy used by scoring/resume_parser.py and
+# profiles/profile_manager.py to extract criteria from a resume. Terms
+# are matched case-insensitively against word boundaries. All terms
+# below are lowercase.
 #
-# `skills` -> kind="skill", weight=3
-# `roles`  -> kind="role",  weight=4
+# `skills`   -> kind="skill"
+# `roles`    -> kind="role",  weight_tier=1 (strongest signal)
+# `keywords` -> kind="keyword"
 #
-# Initial seed targets the Data Analyst persona but is intended to grow.
+# Skill weight_tier (1 = strongest, 2 = solid) is assigned per category:
+# any skill whose category is listed under `core_skill_categories`
+# becomes a tier-1 criterion; all other skill categories are tier-2.
+# See scoring.resume_parser.core_skill_terms / skill_weight_tier.
+#
+# Covers two personas today: the original Data Analyst seed and the
+# IT / Help Desk support persona (the active resume). Both share the
+# generic language / scripting / cloud buckets.
+
+# Categories whose skills are the strongest resume signal for the
+# current (Help Desk / IT support) persona. Skills in these categories
+# are inserted as tier-1 criteria.
+core_skill_categories:
+  - help_desk_support
+  - operating_systems
+  - identity_directory
+  - itsm_tools
+  - networking
+  - hardware
+
 skills:
+  # ----- IT / Help Desk support (tier-1 core) -----
+  help_desk_support:
+    - help desk
+    - service desk
+    - desktop support
+    - deskside support
+    - technical support
+    - end-user support
+    - end user support
+    - tier 1
+    - tier 2
+    - troubleshooting
+    - itil
+    - sla
+    - knowledge base
+    - sop
+  operating_systems:
+    - windows 10
+    - windows 11
+    - windows
+    - macos
+    - linux
+    - os imaging
+    - imaging
+    - ssh
+  identity_directory:
+    - active directory
+    - azure ad
+    - entra id
+    - group policy
+    - microsoft 365
+    - office 365
+    - google workspace
+    - sharepoint
+    - intune
+    - okta
+  itsm_tools:
+    - servicenow
+    - jira
+    - zendesk
+    - freshservice
+    - freshdesk
+    - ticketing
+    - remote desktop
+    - rdp
+    - teamviewer
+  networking:
+    - tcp/ip
+    - dns
+    - dhcp
+    - vpn
+    - lan
+    - wan
+    - vlan
+    - wifi
+    - wireless
+    - firewall
+  hardware:
+    - hardware
+    - bios
+    - ram
+    - psu
+    - nic
+    - printers
+    - peripherals
+    - pc builds
+    - break-fix
+    - dell
+
+  # ----- General / shared (tier-2) -----
   languages:
     - python
     - sql
@@ -15,6 +106,10 @@ skills:
     - java
     - c++
     - c#
+  scripting:
+    - bash
+    - powershell
+    - shell scripting
   data_libraries:
     - pandas
     - numpy
@@ -62,6 +157,24 @@ skills:
     - data warehousing
 
 roles:
+  # IT / Help Desk roles
+  - help desk
+  - help desk technician
+  - service desk
+  - desktop support
+  - desktop support technician
+  - it support
+  - it support specialist
+  - technical support
+  - support specialist
+  - support technician
+  - it technician
+  - it specialist
+  - field technician
+  - systems administrator
+  - sysadmin
+  - network administrator
+  # Data / analytics roles
   - data analyst
   - business analyst
   - bi analyst
@@ -72,8 +185,11 @@ roles:
   - reporting
 
 # kind="keyword" — generic terms that signal relevance but are too broad
-# to grant the role-style 8x multiplier (would over-trigger on JDs that
-# casually mention "data-driven analytics culture" etc.). Keywords cap
-# at 2 occurrences and don't get a title boost.
+# to grant the role-style weighting (would over-trigger on JDs that
+# casually mention them). Keywords contribute the smallest sub-component.
 keywords:
   - analytics
+  - customer service
+  - documentation
+  - itil foundation
+  - comptia

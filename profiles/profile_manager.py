@@ -36,7 +36,7 @@ from db.models import (
     User,
     WorkModality,
 )
-from scoring.resume_parser import load_taxonomy
+from scoring.resume_parser import core_skill_terms, load_taxonomy, skill_weight_tier
 from scoring.text_utils import find_terms
 
 
@@ -69,11 +69,16 @@ def _insert_resume_criteria(
     raw_text: str,
 ) -> None:
     skills, roles, keywords = _extract_terms(raw_text)
+    core_terms = core_skill_terms()
     for term in skills:
+        tier = skill_weight_tier(term, core_terms)
         session.add(Criterion(
             profile_id=profile_id, resume_id=resume_id,
             term=term, kind="skill",
-            weight=3, weight_tier=2, source="resume",
+            # Core skills (help-desk / OS / networking / hardware / ITSM /
+            # directory) are the strongest signal for this persona and go
+            # in as tier-1; the rest stay tier-2.
+            weight=4 if tier == 1 else 3, weight_tier=tier, source="resume",
         ))
     for term in roles:
         session.add(Criterion(

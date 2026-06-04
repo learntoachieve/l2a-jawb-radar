@@ -217,44 +217,66 @@ class BaseScraper(ABC):
                         summary["duplicates"] += 1
                         continue
 
-                    item = Item(
-                        source_id=source.id,
-                        external_id=str(norm["external_id"]),
-                        title=norm["title"],
-                        body=norm.get("body", ""),
-                        url=norm["url"],
-                        metadata_json=norm.get("metadata_json"),
-                        posted_at=norm.get("posted_at"),
-                        content_hash=h,
-                    )
-                    session.add(item)
-                    session.flush()
+                    # SAVEPOINT around the insert + Pass-2 update.
+                    # If the unique constraint (source_id, url) or
+                    # (source_id, external_id) fires here, only this one
+                    # item's changes are rolled back — the outer
+                    # transaction (and every earlier successful insert)
+                    # stays intact. Bare ``session.rollback()`` here
+                    # would discard the whole batch's worth of accumulated
+                    # work, which is the failure mode the original report
+                    # was describing.
+                    with session.begin_nested():
+                        item = Item(
+                            source_id=source.id,
+                            external_id=str(norm["external_id"]),
+                            title=norm["title"],
+                            body=norm.get("body", ""),
+                            url=norm["url"],
+                            metadata_json=norm.get("metadata_json"),
+                            posted_at=norm.get("posted_at"),
+                            content_hash=h,
+                        )
+                        session.add(item)
+                        session.flush()
 
-                    # Pass 2: full JD fetch. On non-empty result, replace
-                    # body so scoring runs against the full text. On
-                    # empty (HTTP error, timeout, etc.), keep the
-                    # Pass-1 body — never store an empty string.
-                    full_body = self.fetch_full_jd(norm["url"])
-                    if full_body:
-                        item.body = full_body
-                        summary["pass2_fetched"] += 1
-                        # Recompute the content hash to reflect the
-                        # richer body; downstream dedup uses this.
-                        item.content_hash = _normalized_content_hash(
-                            item.title, company, full_body
-                        )
-                    else:
-                        summary["pass2_empty"] += 1
-                        print(
-                            f"[{self.source_name}] pass2 empty for "
-                            f"{norm['url']!r}, keeping snippet body"
-                        )
-                    session.flush()
+                        # Pass 2: full JD fetch. On non-empty result,
+                        # replace body so scoring runs against the full
+                        # text. On empty (HTTP error, timeout, etc.),
+                        # keep the Pass-1 body — never store empty.
+                        full_body = self.fetch_full_jd(norm["url"])
+                        if full_body:
+                            item.body = full_body
+                            summary["pass2_fetched"] += 1
+                            # Recompute the content hash to reflect the
+                            # richer body; downstream dedup uses this.
+                            item.content_hash = _normalized_content_hash(
+                                item.title, company, full_body
+                            )
+                        else:
+                            summary["pass2_empty"] += 1
+                            print(
+                                f"[{self.source_name}] pass2 empty for "
+                                f"{norm['url']!r}, keeping snippet body"
+                            )
+                        session.flush()
                     summary["new"] += 1
 
                 except Exception as exc:
                     summary["errors"] += 1
                     print(f"[{self.source_name}] normalize/insert error: {exc}")
+                    # ``begin_nested()`` rolled back its SAVEPOINT
+                    # automatically when the exception unwound the
+                    # ``with`` block, so the outer transaction is still
+                    # valid and the loop can continue without manual
+                    # session.rollback(). If a flush failure leaked out
+                    # of the SAVEPOINT (shouldn't happen, but defensive),
+                    # we still want the loop to keep going.
+                    try:
+                        if session.is_active is False:
+                            session.rollback()
+                    except Exception:
+                        pass
 
             source.last_run_at = _now_utc_naive()
             session.commit()
